@@ -50,12 +50,12 @@ void appMain(gecko_configuration_t *pconfig)
   /* Initialize Periodic advertisement */
   gecko_init_periodic_advertising();
 
+   //Initialize CTE
+   gecko_bgapi_class_cte_transmitter_init();
+
   while (1) {
       /* Event pointer for handling events */
       struct gecko_cmd_packet* evt;
-
-      //Initialize CTE
-      gecko_bgapi_class_cte_transmitter_init();
 
       /* if there are no events pending then the next call to gecko_wait_event() may cause
            * device go to deep sleep. Make sure that debug prints are flushed before going to sleep */
