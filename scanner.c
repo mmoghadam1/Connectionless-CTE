@@ -20,6 +20,7 @@
 #include "native_gecko.h"
 #include "gatt_db.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include "app.h"
 
 /* Print boot message */
@@ -72,10 +73,9 @@ void appMain(gecko_configuration_t *pconfig)
 
   /* Initialize stack */
   gecko_init(pconfig);
-	
-   //Initialize CTE Reciever
-   gecko_bgapi_class_cte_receiver_init();
 
+  //Initialize CTE Reciever
+  gecko_bgapi_class_cte_receiver_init();
 
   uint8 sync_handle;
   gecko_bgapi_class_sync_init();
@@ -83,8 +83,6 @@ void appMain(gecko_configuration_t *pconfig)
   while (1) {
     /* Event pointer for handling events */
     struct gecko_cmd_packet* evt;
-
-
 
     /* if there are no events pending then the next call to gecko_wait_event() may cause
      * device go to deep sleep. Make sure that debug prints are flushed before going to sleep */
@@ -110,11 +108,10 @@ void appMain(gecko_configuration_t *pconfig)
 		  gecko_cmd_le_gap_set_discovery_timing(le_gap_phy_1m,200,200);
 		  gecko_cmd_le_gap_set_discovery_type(le_gap_phy_1m,0);
 		  gecko_cmd_le_gap_start_discovery(le_gap_phy_1m,le_gap_discover_observation);
-
 		break;
 
 	  case gecko_evt_le_connection_closed_id:
-		  printf("Connection Closed\r\n");
+
 		/* Check if need to boot to dfu mode */
 		if (boot_to_dfu) {
 		  /* Enter to DFU OTA mode */
@@ -144,18 +141,12 @@ void appMain(gecko_configuration_t *pconfig)
 						 evt->data.evt_le_gap_extended_scan_response.address_type)->sync;
 				  printLog("cmd_sync_open() sync = 0x%2X\r\n", sync_handle);
 
-
 			  }
 		  }
 	  }
 	  break;
 
-	  case gecko_evt_sync_opened_id:
-		  /* now that sync is open, we can stop scanning*/
-		  printLog("evt_sync_opened\r\n");
-		  gecko_cmd_hardware_set_soft_timer(0,1,0);
-		  gecko_cmd_le_gap_end_procedure();
-
+	  case gecko_evt_sync_opened_id: {
 		  //configure & enable cte after periodic sync established
 		  uint8 handle = sync_handle;
 		  uint8 slot_dur = 1;
@@ -167,10 +158,16 @@ void appMain(gecko_configuration_t *pconfig)
 		  uint16 res = gecko_cmd_cte_receiver_enable_connectionless_cte(handle, slot_dur,cte_count,s_len,sa)->result;
 		  //printf("Config Response: 0x%x\r\n",config_res);
 		  printf("Response: 0x%x\r\n",res);
+		  /* now that sync is open, we can stop scanning*/
+		  printLog("evt_sync_opened\r\n");
+		  gecko_cmd_hardware_set_soft_timer(0,1,0);
+		  gecko_cmd_le_gap_end_procedure();
+
 		  break;
+	  }
 
 	  case gecko_evt_sync_closed_id:
-		  printLog("periodic sync closed. reason 0x%2X, sync handle %d\r\n",
+		  printLog("periodic sync closed. reason 0x%2X, sync handle %d",
 				  evt->data.evt_sync_closed.reason,
 				  evt->data.evt_sync_closed.sync);
 		  /* restart discovery */
@@ -178,8 +175,9 @@ void appMain(gecko_configuration_t *pconfig)
 		  break;
 
 	  case gecko_evt_sync_data_id:
-		  /*
+
 		  printLog("periodic sync handle %d\r\n", evt->data.evt_sync_data.sync);
+		  /*
 		  printLog("got following sync data: \r\n ");
 		  for(int i = 0; i < evt->data.evt_sync_data.data.len ; i++){
 			  printLog(" %X", evt->data.evt_sync_data.data.data[i]);
@@ -189,8 +187,9 @@ void appMain(gecko_configuration_t *pconfig)
 		  printLog("periodic sync RSSI %d and Tx power %d\r\n",
 				  evt->data.evt_sync_data.rssi,
 				  evt->data.evt_sync_data.tx_power);
+				  */
 		  printLog("periodic data status %d\r\n", evt->data.evt_sync_data.data_status);
-		  break; */
+		  break;
 
 	  case gecko_evt_hardware_soft_timer_id:
 	  {
@@ -220,18 +219,41 @@ void appMain(gecko_configuration_t *pconfig)
 		}
 		break;
 	  case gecko_evt_cte_receiver_connectionless_iq_report_id: {
-		    printf("GOT CONNECTIONLESS IQ report\r\n");
-		    struct gecko_msg_cte_receiver_connectionless_iq_report_evt_t report = evt->data.evt_cte_receiver_connectionless_iq_report;
-			printf("GOT SILABS IQ report\r\n");
-			printf("status: %d, ch: %d, rssi: %d, ant:%d, cte:%d, duration:%d, len:%d\r\n", report.status,
-					report.channel, report.rssi, report.rssi_antenna_id, report.cte_type, report.slot_durations,
-					report.samples.len);
-			for (int i=0; i<report.samples.len; i++) {
-				RETARGET_WriteChar(report.samples.data[i]);
+			printf("GOT CONNECTIONLESS IQ report\r\n");
+			uint8* status = malloc(2);
+			memcpy(status, & evt->data.evt_cte_receiver_connectionless_iq_report.status, 2);
+			uint8* ch = malloc(1);
+			memcpy(ch, & evt->data.evt_cte_receiver_connectionless_iq_report.channel, 1);
+			int8* rssi = malloc(1);
+			memcpy(rssi, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi, 1);
+			uint8* ant = malloc(1);
+			memcpy(rssi, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi_antenna_id, 1);
+			uint8* cte = malloc(1);
+			memcpy(cte, & evt->data.evt_cte_receiver_connectionless_iq_report.cte_type, 1);
+			uint16* durations = malloc(2);
+			memcpy(durations, & evt->data.evt_cte_receiver_connectionless_iq_report.cte_type, 2);
+			uint8* len = malloc(1);
+			memcpy(len, & evt->data.evt_cte_receiver_connectionless_iq_report.samples.len, 1);
+			uint8* data = malloc(*len);
+			memcpy(data, & evt->data.evt_cte_receiver_connectionless_iq_report.samples.data, *len);
+
+			printf("status: %d, ch: %d, rssi: %d, ant:%d, cte:%d, duration:%d, len:%d\r\n", *status, *ch, *rssi, *ant, *cte, *durations, *len);
+
+			for (int i=0; i<*len; i++) {
+				RETARGET_WriteChar(data[i]);
 			}
+			free(status);
+			free(ch);
+			free(rssi);
+			free(cte);
+			free(ant);
+			free(durations);
+			free(len);
+			free(data);
 			printf("\r\n");
 		  break;
-	  }
+	 	  }
+
 	  default:
 		break;
 	}
