@@ -43,25 +43,18 @@ void appMain(gecko_configuration_t *pconfig)
   /* Initialize debug prints. Note: debug prints are off by default. See DEBUG_LEVEL in app.h */
   initLog();
 
-
   /* Initialize stack */
   gecko_init(pconfig);
 
   /* Initialize Periodic advertisement */
   gecko_init_periodic_advertising();
 
-   //Initialize CTE
-   gecko_bgapi_class_cte_transmitter_init();
+  //Initialize CTE
+  gecko_bgapi_class_cte_transmitter_init();
 
   while (1) {
       /* Event pointer for handling events */
       struct gecko_cmd_packet* evt;
-
-      /* if there are no events pending then the next call to gecko_wait_event() may cause
-           * device go to deep sleep. Make sure that debug prints are flushed before going to sleep */
-	  if (!gecko_event_pending()) {
-		flushLog();
-	  }
 
       /* Check for stack event. */
       evt = gecko_wait_event();
@@ -79,8 +72,6 @@ void appMain(gecko_configuration_t *pconfig)
         case gecko_evt_system_boot_id:
 
         bootMessage(&(evt->data.evt_system_boot));
-
-
       	gecko_cmd_system_set_tx_power(100);
       	gecko_cmd_le_gap_set_advertise_tx_power(0,30);
           /* Set advertising parameters. 100ms advertisement interval.
@@ -93,33 +84,28 @@ void appMain(gecko_configuration_t *pconfig)
           /* turn off legacy PDU flag*/
           gecko_cmd_le_gap_clear_advertise_configuration(0,1);
 
-   		  // Start extended advertising
           result = gecko_cmd_le_gap_start_advertising(0,le_gap_general_discoverable, le_gap_non_connectable)->result;
           printf("le_gap_start_advertising() returns 0x%X\r\n", result);
 
-          // Start periodic advertising
           /* adv set #1 , 100 ms min/max interval, include tx power in PDU*/
           result = gecko_cmd_le_gap_start_periodic_advertising(0,160,160,1)->result;
           printf("start_periodic_advertising returns 0x%X\r\n",result);
 
-          //configure & enable cte after periodic advertising enabled
-
 		   uint8 handle = 0;
-		   uint8 cte_length = 5;
+		   uint8 cte_length = 0x14;
 		   uint8 cte_type = 0;
 		   uint8 cte_count = 1;
 		   uint8 s_len = 1;
 		   uint8 sa[1] = {0};
 
 		   uint16 response = gecko_cmd_cte_transmitter_enable_connectionless_cte(handle,cte_length,cte_type,cte_count,s_len,sa)->result;
-		   printf("Response: 0x%x \r\n",response);
-
-
+		   printf("Response: 0x%x", response);
           //Set BT5 advertisement data
           result = gecko_cmd_le_gap_bt5_set_adv_data(0,8,sizeof(periodic_adv_data),periodic_adv_data)->result;
-          //printf("set_adv_data for periodic advertising data returns 0x%X\r\n",result);
+          printf("set_adv_data for periodic advertising data returns 0x%X\r\n",result);
           gecko_cmd_hardware_set_soft_timer(32768, 0, 0);
           break;
+
         case gecko_evt_le_connection_closed_id:
 
           /* Check if need to boot to dfu mode */
@@ -137,17 +123,15 @@ void appMain(gecko_configuration_t *pconfig)
         	for (int i = 0; i < 190; i++) {
         	    periodic_adv_data[i] = rand()%9;
         	}
-        	/*
         	printf("\r\n");
         	for (int i = 0; i < 190; i++) {
         	        	   printf(" %X", periodic_adv_data[i]);
         	        	}
         	printf("\r\n");
-        	*/
 
         	//Reset the advertising data pointers to reflect the change in data
-        	result = gecko_cmd_le_gap_bt5_set_adv_data(1,8,sizeof(periodic_adv_data),periodic_adv_data)->result;
-        	//printf("set_adv_data for periodic advertising data returns 0x%X \r\n",result);
+        	result = gecko_cmd_le_gap_bt5_set_adv_data(0,8,sizeof(periodic_adv_data),periodic_adv_data)->result;
+        	printf("set_adv_data for periodic advertising data returns 0x%X \r\n",result);
         	break;
 
         /* Events related to OTA upgrading
@@ -194,6 +178,3 @@ static void bootMessage(struct gecko_msg_system_boot_evt_t *bootevt)
   printLog("%2.2x\r\n", local_addr.addr[0]);
 #endif
 }
-
-
-
