@@ -220,18 +220,18 @@ void appMain(gecko_configuration_t *pconfig)
 		break;
 	  case gecko_evt_cte_receiver_connectionless_iq_report_id: {
 			printf("GOT CONNECTIONLESS IQ report\r\n");
-			uint8* status = malloc(2);
+			uint16* status = malloc(2);
 			memcpy(status, & evt->data.evt_cte_receiver_connectionless_iq_report.status, 2);
 			uint8* ch = malloc(1);
 			memcpy(ch, & evt->data.evt_cte_receiver_connectionless_iq_report.channel, 1);
 			int8* rssi = malloc(1);
 			memcpy(rssi, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi, 1);
 			uint8* ant = malloc(1);
-			memcpy(rssi, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi_antenna_id, 1);
+			memcpy(ant, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi_antenna_id, 1);
 			uint8* cte = malloc(1);
 			memcpy(cte, & evt->data.evt_cte_receiver_connectionless_iq_report.cte_type, 1);
 			uint16* durations = malloc(2);
-			memcpy(durations, & evt->data.evt_cte_receiver_connectionless_iq_report.cte_type, 2);
+			memcpy(durations, & evt->data.evt_cte_receiver_connectionless_iq_report.slot_durations, 2);
 			uint8* len = malloc(1);
 			memcpy(len, & evt->data.evt_cte_receiver_connectionless_iq_report.samples.len, 1);
 			uint8* data = malloc(*len);
