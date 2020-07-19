@@ -119,6 +119,10 @@ void appMain(gecko_configuration_t *pconfig) {
 		/* turn off legacy PDU flag*/
 		gecko_cmd_le_gap_clear_advertise_configuration(0, 1);
 
+		uint8_t channel_map_data[5] = {3, 0, 0, 0, 0};
+		result = gecko_cmd_le_gap_set_data_channel_classification(5, channel_map_data)->result;
+		printLog("set data channel classification: %d\r\n", result);
+
 		result = gecko_cmd_le_gap_start_advertising(0,
 				le_gap_general_discoverable, le_gap_non_connectable)->result;
 		printf("le_gap_start_advertising() returns 0x%X\r\n", result);
