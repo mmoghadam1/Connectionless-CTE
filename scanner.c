@@ -23,6 +23,8 @@
 #include <stdlib.h>
 #include "app.h"
 
+#include "em_rtcc.h"
+
 /* Print boot message */
 static void bootMessage(struct gecko_msg_system_boot_evt_t *bootevt);
 
@@ -61,6 +63,8 @@ static uint8_t findServiceInAdvertisement(uint8_t *data, uint8_t len)
 /* Main application */
 void appMain(gecko_configuration_t *pconfig)
 {
+	uint32_t old_time = 0;
+	uint32_t new_time, delta_t;
 #if DISABLE_SLEEP > 0
   pconfig->sleep.flags = 0;
 #endif
@@ -161,13 +165,14 @@ void appMain(gecko_configuration_t *pconfig)
 		  /* now that sync is open, we can stop scanning*/
 		  printLog("evt_sync_opened\r\n");
 		  gecko_cmd_hardware_set_soft_timer(0,1,0);
+		  // gecko_cmd_hardware_set_soft_timer(32768,1,1);
 		  gecko_cmd_le_gap_end_procedure();
 
 		  break;
 	  }
 
 	  case gecko_evt_sync_closed_id:
-		  printLog("periodic sync closed. reason 0x%2X, sync handle %d",
+		  printLog("periodic sync closed. reason 0x%2X, sync handle %d\r\n",
 				  evt->data.evt_sync_closed.reason,
 				  evt->data.evt_sync_closed.sync);
 		  /* restart discovery */
@@ -176,24 +181,29 @@ void appMain(gecko_configuration_t *pconfig)
 
 	  case gecko_evt_sync_data_id:
 
-		  printLog("periodic sync handle %d\r\n", evt->data.evt_sync_data.sync);
+		  // printLog("periodic sync handle %d\r\n", evt->data.evt_sync_data.sync);
 		  /*
-		  printLog("got following sync data: \r\n ");
+		  printLog("got following sync data: ");
 		  for(int i = 0; i < evt->data.evt_sync_data.data.len ; i++){
 			  printLog(" %X", evt->data.evt_sync_data.data.data[i]);
 
 		  }
+
 		  printLog("\r\n");
+		  */
+		  /*
 		  printLog("periodic sync RSSI %d and Tx power %d\r\n",
 				  evt->data.evt_sync_data.rssi,
 				  evt->data.evt_sync_data.tx_power);
-				  */
-		  printLog("periodic data status %d\r\n", evt->data.evt_sync_data.data_status);
+		  */
+		  // printLog("periodic data status %d\r\n", evt->data.evt_sync_data.data_status);
 		  break;
 
 	  case gecko_evt_hardware_soft_timer_id:
 	  {
+		  printLog("got soft timer event: %d\r\n", evt->data.evt_hardware_soft_timer.handle);
 		  if(1==evt->data.evt_hardware_soft_timer.handle){
+			  printLog("soft timer, close sync\r\n");
 			  gecko_cmd_sync_close(sync_handle);
 		  }
 	  }
@@ -219,19 +229,57 @@ void appMain(gecko_configuration_t *pconfig)
 		}
 		break;
 	  case gecko_evt_cte_receiver_connectionless_iq_report_id: {
+			struct gecko_msg_cte_receiver_connectionless_iq_report_evt_t *report =
+					&(evt->data.evt_cte_receiver_connectionless_iq_report);
+			/*
+			printf(
+					"status: %d, ch: %d, rssi: %d, ant:%d, cte:%d, duration:%d, sync:%d, event: %d, len:%d\r\n",
+					report->status, report->channel, report->rssi, report->rssi_antenna_id,
+					report->cte_type, report->slot_durations, report->sync, report->event_counter,
+					report->samples.len);
+			new_time = RTCC_CounterGet();
+			printf("time: %ld\r\n", RTCC_CounterGet()-old_time);
+			old_time = new_time;
+			*/
+			new_time = RTCC_CounterGet();
+			delta_t = new_time - old_time;
+			old_time = new_time;
+
+			RETARGET_WriteChar(0xFF);
+			RETARGET_WriteChar(0xFF);
+			RETARGET_WriteChar(0xFF);
+			RETARGET_WriteChar(0xFF);
+			uint16 event = report->event_counter;
+			RETARGET_WriteChar((event) & 0xFF);
+			RETARGET_WriteChar((event>>8) & 0xFF);
+			RETARGET_WriteChar(report->channel);
+			RETARGET_WriteChar(-report->rssi);
+			uint8_t *temp = (uint8_t *) &delta_t;
+			for (int i=0; i<4; i++) {
+				RETARGET_WriteChar(temp[i]);
+			}
+			RETARGET_WriteChar(report->samples.len);
+
+			for (int i=0; i<report->samples.len; i++) {
+				RETARGET_WriteChar(report->samples.data[i]);
+			}
+			printf("\r\n");
+
+			/*
 			printf("GOT CONNECTIONLESS IQ report\r\n");
-			uint16* status = malloc(2);
+
+			uint8* status = malloc(2);
 			memcpy(status, & evt->data.evt_cte_receiver_connectionless_iq_report.status, 2);
 			uint8* ch = malloc(1);
 			memcpy(ch, & evt->data.evt_cte_receiver_connectionless_iq_report.channel, 1);
 			int8* rssi = malloc(1);
 			memcpy(rssi, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi, 1);
 			uint8* ant = malloc(1);
-			memcpy(ant, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi_antenna_id, 1);
+			memcpy(rssi, & evt->data.evt_cte_receiver_connectionless_iq_report.rssi_antenna_id, 1);
 			uint8* cte = malloc(1);
 			memcpy(cte, & evt->data.evt_cte_receiver_connectionless_iq_report.cte_type, 1);
 			uint16* durations = malloc(2);
-			memcpy(durations, & evt->data.evt_cte_receiver_connectionless_iq_report.slot_durations, 2);
+			memcpy(durations, & evt->data.evt_cte_receiver_connectionless_iq_report.cte_type, 2);
 			uint8* len = malloc(1);
 			memcpy(len, & evt->data.evt_cte_receiver_connectionless_iq_report.samples.len, 1);
 			uint8* data = malloc(*len);
@@ -242,6 +290,7 @@ void appMain(gecko_configuration_t *pconfig)
 			for (int i=0; i<*len; i++) {
 				RETARGET_WriteChar(data[i]);
 			}
+
 			free(status);
 			free(ch);
 			free(rssi);
@@ -251,6 +300,7 @@ void appMain(gecko_configuration_t *pconfig)
 			free(len);
 			free(data);
 			printf("\r\n");
+			*/
 		  break;
 	 	  }
 
