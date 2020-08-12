@@ -30,6 +30,9 @@
 #include "em_gpio.h"
 #include "em_cmu.h"
 #include "em_msc.h"
+#include "em_prs.h"
+
+#define RX_OBS_PRS_CHANNEL 0
 
 /* Print boot message */
 static void bootMessage(struct gecko_msg_system_boot_evt_t *bootevt);
@@ -101,36 +104,51 @@ static uint8_t findServiceInAdvertisement(uint8_t *data, uint8_t len)
   return 0;
 }
 
-static volatile uint32_t overflowCount;
-static volatile uint32_t* timer_count;
+static volatile uint32_t overflow = 5;
+static volatile uint32_t* ad_data_ptr[4];
+uint8_t temp[16];
 
 void initGpio(void){
 	// Turn on the GPIO clocks to access their registers.
 	CMU_ClockEnable(cmuClock_GPIO, true);
+	CMU_ClockEnable(cmuClock_PRS, true);
 	CMU_ClockEnable(cmuClock_TIMER0, true);
 	CMU_ClockEnable(cmuClock_TIMER1, true);
+}
+
+void initPrs(void){
+	// Configure PRS Channel 0 to output RAC_RX.
+	PRS_SourceAsyncSignalSet(0,PRS_ASYNC_CH_CTRL_SOURCESEL_RACL,_PRS_ASYNC_CH_CTRL_SIGSEL_RACLRX);
+
+	//PRS_PinOutput(RX_OBS_PRS_CHANNEL, prsTypeAsync, OBS_PRS_PORT, RX_OBS_PRS_PIN);
+	PRS_Combine (0, 0, prsLogic_A);
+	PRS_ConnectConsumer(0, prsTypeAsync, prsConsumerTIMER0_CC0);
+	//PRS_ConnectConsumer(1, prsTypeAsync, prsConsumerTIMER1_CC1);
 }
 
 void initTimer(void){
 	// Configure CC TIMER0
 	TIMER_InitCC_TypeDef timerCCInit0 = TIMER_INITCC_DEFAULT;
-	//timerCCInit0.eventCtrl = timerEdgeRising;
-	//timerCCInit0.edge = timerEdgeRising;
-	timerCCInit0.mode = timerCCModeOff;
+	timerCCInit0.eventCtrl = timerEdgeFalling;
+	timerCCInit0.edge = timerEdgeFalling;
+	timerCCInit0.mode = timerCCModeCapture;
+	timerCCInit0.prsSel = RX_OBS_PRS_CHANNEL;
+	timerCCInit0.prsInput = true;
+	timerCCInit0.prsInputType = timerPrsInputAsyncLevel;
 	TIMER_InitCC(TIMER0, 0, &timerCCInit0);
 	// Configure TIMER0
 	TIMER_Init_TypeDef timerInit0 = TIMER_INIT_DEFAULT;
 	timerInit0.clkSel = cmuClock_TIMER0;
 	timerInit0.debugRun = false;
 	timerInit0.prescale = timerPrescale1;
+	timerInit0.enable = true;
 	timerInit0.mode = timerModeUp;
 	//timerInit0.riseAction = timerInputActionReloadStart;
 	TIMER_TopSet(TIMER0, TIMER_MaxCount(TIMER0));
 	TIMER_Init(TIMER0, &timerInit0);
-	timer_count = &TIMER0->CNT;
 
-
-
+	ad_data_ptr[0] = &TIMER0->CNT;
+/*
 	// Configure CC TIMER1
 	TIMER_InitCC_TypeDef timerCCInit1 = TIMER_INITCC_DEFAULT;
 
@@ -143,54 +161,61 @@ void initTimer(void){
 	timerInit1.mode = timerModeUp;
 	TIMER_TopSet(TIMER1, 35625);
 	TIMER_Init(TIMER1, &timerInit1);
-
+*/
 
 	// Enable overflow and CC0 interrupt
-	TIMER_IntEnable(TIMER0, TIMER_IF_OF);
+	TIMER_IntEnable(TIMER0, TIMER_IF_OF | TIMER_IF_CC0);
 	// Enable overflow
-	TIMER_IntEnable(TIMER1, TIMER_IF_OF);
+	//TIMER_IntEnable(TIMER1, TIMER_IF_OF);
 	// Enable TIMER0 interrupt vector in NVIC
 	NVIC_EnableIRQ(TIMER0_IRQn);
-	NVIC_EnableIRQ(TIMER1_IRQn);
+	//NVIC_EnableIRQ(TIMER1_IRQn);
+}
+
+void setTemp(){
+	memcpy(temp, *ad_data_ptr, sizeof(uint32_t));
+	memcpy(temp+4, *(ad_data_ptr+1), sizeof(uint32_t));
+	memcpy(temp+8, *(ad_data_ptr+2), sizeof(uint32_t));
+	memcpy(temp+12, *(ad_data_ptr+3), sizeof(uint32_t));
 }
 
 void TIMER0_IRQHandler(void){
 	uint32_t flags = TIMER_IntGet(TIMER0);
 	TIMER_IntClear(TIMER0, flags);
 	// Check if the timer overflowed
+	//overflow = 4;
 	if (flags & TIMER_IF_OF) {
-		//TIMER_CounterSet(TIMER0, 0);
-		overflowCount+=1;
+		overflow++;
+	}
+	//update timer
+	if (flags & TIMER_IF_CC0){
+		//setTemp();
+		//uint16_t result = gecko_cmd_le_gap_bt5_set_adv_data(0, 8,  sizeof(uint32_t)*4, temp)->result;
+		//printLog("RES: 0x%x\r\n", result);
 	}
 }
-void TIMER1_IRQHandler(void){
-	uint32_t flags = TIMER_IntGet(TIMER1);
-	TIMER_IntClear(TIMER1, flags);
-	// Check if the timer overflowed
-	if (flags & TIMER_IF_OF) {
 
-		//delta=0
-	}
-}
 
 void initializeTimers()
 {
 	initGpio();
+	initPrs();
 	initTimer();
 }
-
+/*
 void updateTime(uint32_t* delta, uint32_t* old, uint8_t ad_data[12]){
-	if(overflowCount>0){
-		*(delta) += ((TIMER_TopGet(TIMER0)*overflowCount +1)+*timer_count-(*old));
-		overflowCount = 0;
+	if(overflow>0){
+		*(delta) += ((TIMER_TopGet(TIMER0)*overflow +1)+*timer_count);
+		overflow = 0;
 	}
 	else
 		*(delta) += *timer_count;
 	TIMER_CounterSet(TIMER0, 0);
-	*old = *timer_count;
 	memcpy(ad_data,delta, sizeof(uint32_t));
 	gecko_cmd_le_gap_bt5_set_adv_data(0, 8, sizeof(uint8_t)*12, ad_data);
 }
+*/
+
 
 
 
@@ -219,8 +244,8 @@ void appMain(gecko_configuration_t *pconfig)
 	gecko_bgapi_class_sync_init();
 
 	// Initialize advertising parameters
-	ad_params.min_interval 	= 160;
-	ad_params.max_interval 	= 160;
+	ad_params.min_interval 	= 120;
+	ad_params.max_interval 	= 120;
 	ad_params.ad_handle 	= 0;
 	ad_params.ch_map[0]   	= 3;
 	for(int i = 1; i<5; i++)
@@ -244,36 +269,27 @@ void appMain(gecko_configuration_t *pconfig)
 	gecko_bgapi_class_cte_receiver_init();
 	gecko_bgapi_class_cte_transmitter_init();
 
+	uint16 result;
 	uint32_t offset;
-
-	uint32_t* data = malloc(12);
-	//uint32_t last_other_time = 0;
-	uint32_t last_num = 0;
-	uint8_t skip_cte = 0;
-	uint8_t ad_data[12];
-	uint32_t* temp = (uint32_t*)ad_data;
-	uint32_t* ad_data_ptr[2];
-	uint32_t delta = 0;
-
+	uint32_t* data = malloc(16);
+	uint8_t itr = 0;
+	uint8_t* ram = malloc(184*10);
 
 	initializeTimers();
-	uint32_t* other_time = malloc(1);
-	uint32_t* num = malloc(1);
+	uint32_t* other_overflow = malloc(4);
+	uint32_t* other_time = malloc(4);
+	uint32_t* num = malloc(4);
+	*(other_overflow) = 0;
 	*(other_time) = 0;
 	*(num) = 1;
 
-	ad_data_ptr[0] = other_time;
-	ad_data_ptr[1] = num;
-	memcpy(ad_data, timer_count, sizeof(uint32_t));
-	memcpy(ad_data+4, *(ad_data_ptr), sizeof(uint32_t));
-	memcpy(ad_data+8, *(ad_data_ptr+1), sizeof(uint32_t));
-
-	uint16 result;
-	uint32_t old = 0;
-
-	uint8_t* ram = malloc(174*10);
-	uint8_t itr = 0;
-
+	ad_data_ptr[1] = other_time;
+	ad_data_ptr[2] = num;
+	ad_data_ptr[3] = &overflow;
+	printLog("%lu\r\n", *ad_data_ptr[0]);
+	printLog("%lu\r\n", *ad_data_ptr[1]);
+	printLog("%lu\r\n", *ad_data_ptr[2]);
+	printLog("%lu\r\n", *ad_data_ptr[3]);
 
 
 	while (1) {
@@ -289,13 +305,12 @@ void appMain(gecko_configuration_t *pconfig)
 		/* Check for stack event. This is a blocking event listener. If you want non-blocking please see UG136. */
 
 		//printLog("%lu\r\n", overflowCount);
-		updateTime(&delta, &old, ad_data);
 		//printLog("%lu\r\n", delta);
 		//printLog("%lu\r\n", temp[0]);
 		//printLog("t%lu\r\n", TIMER_CounterGet(TIMER0));
+		setTemp();
+		result = gecko_cmd_le_gap_bt5_set_adv_data(0, 8, sizeof(uint32_t)*4, temp)->result;
 		evt = gecko_wait_event();
-
-		updateTime(&delta, &old, ad_data);
 
 		/* Handle events */
 		switch (BGLIB_MSG_ID(evt->header)) {
@@ -305,7 +320,7 @@ void appMain(gecko_configuration_t *pconfig)
 
 				gecko_cmd_system_set_tx_power(100);
 				gecko_cmd_le_gap_set_advertise_tx_power(0,30);
-				gecko_cmd_le_gap_set_advertise_timing(0, 160, 160, 0, 0);
+				gecko_cmd_le_gap_set_advertise_timing(0, ad_params.max_interval, 160, 0, 0);
 				gecko_cmd_le_gap_clear_advertise_configuration(0,1);
 				result = gecko_cmd_le_gap_set_data_channel_classification(5, ad_params.ch_map)->result;
 				printLog("set data channel classification: %d\r\n", result);
@@ -319,18 +334,6 @@ void appMain(gecko_configuration_t *pconfig)
 				printLog("start_periodic_advertising returns 0x%X\r\n",result);
 
 				//Set BT5 advertisement data
-
-
-				printLog("ad_data: ");
-				for(int i=0; i< 11; i++){
-					printLog("%d", ad_data[i]);
-				}
-				printLog("%d\r\n", ad_data[11]);
-
-
-				printLog("current time: %lu\r\n", temp[0]);
-				printLog("other time: %lu\r\n", temp[1]);
-				printLog("num: %lu\r\n", temp[2]);
 
 				//result = gecko_cmd_le_gap_bt5_set_adv_data(0,8,sizeof(ad_data),ad_data)->result;
 				//printLog("set_adv_data for periodic advertising data returns 0x%X\r\n",result);
@@ -347,9 +350,7 @@ void appMain(gecko_configuration_t *pconfig)
 				gecko_cmd_le_gap_start_discovery(le_gap_phy_1m,le_gap_discover_observation);
 			break;
 
-
 			case gecko_evt_le_connection_closed_id:
-
 				/* Check if need to boot to dfu mode */
 				if (boot_to_dfu) {
 				/* Enter to DFU OTA mode */
@@ -391,7 +392,7 @@ void appMain(gecko_configuration_t *pconfig)
 				result = gecko_cmd_cte_receiver_enable_connectionless_cte(sync_handle,
 								RX_params.slot_dur, RX_params.cte_count, RX_params.s_len, RX_params.sa)->result;
 				printLog("Result of gecko_cmd_cte_receiver_enable_connectionless_cte: 0x%x\r\n",result);
-
+				TIMER_Enable(TIMER0,true);
 			break;
 
 			case gecko_evt_sync_closed_id:
@@ -403,39 +404,15 @@ void appMain(gecko_configuration_t *pconfig)
 
 			case gecko_evt_sync_data_id:
 				printLog("PERIODIC PACKET RECIEVED\r\n");
-				printLog("DATA: %lu %lu %lu \r\n", data[0], data[1], data[2]);
-				//if(last_num == data[2]){
-				//	skip_cte = 1;
-				//	break;
-				//}
-
-				//last_num = data[2];
-				//skip_cte = 0;
-
-
+				printLog("%d\r\n", evt->data.evt_sync_data.data.len);
+				printLog("DATA: %lu %lu %lu %lu \r\n", data[0], data[1], data[2], data[3]);
 				data = (uint32_t*) &(evt->data.evt_sync_data.data.data);
-				if(data[1] == 0){
-					(*num)++;
-					printLog("This is the first packet\r\n");
-
-				}
-				else{
-					memcpy(num, data+2,sizeof(uint32_t));
-					(*num)++;
-				}
-
+				memcpy(num, data+2,sizeof(uint32_t));
+				(*num)++;
 				memcpy(other_time, data, sizeof(uint32_t));
-
-				updateTime(&delta, &old, ad_data);
-				memcpy(ad_data+4, *(ad_data_ptr), sizeof(uint32_t));
-				memcpy(ad_data+8, *(ad_data_ptr+1), sizeof(uint32_t));
-
-				result = gecko_cmd_le_gap_bt5_set_adv_data(0, 8, sizeof(ad_data), ad_data)->result;
-
-				printLog("current time: %lu\r\n", temp[0]);
-				printLog("other time1: %lu\r\n", temp[1]);
-				//printLog("num: %lu\r\n", temp[2]);
-
+				memcpy(other_overflow, data+3, sizeof(uint32_t));
+				TIMER_CounterSet(TIMER0, 0);
+				overflow = 0;
 			break;
 			/* Events related to OTA upgrading
 			----------------------------------------------------------------------------- */
@@ -460,13 +437,6 @@ void appMain(gecko_configuration_t *pconfig)
 
 			case gecko_evt_cte_receiver_connectionless_iq_report_id: {
 				printLog("CTE REPORT\r\n");
-
-				if(skip_cte)
-					break;
-
-				overflowCount = 0;
-				TIMER_CounterSet(TIMER0, 0);
-				delta = 0;
 
 				struct gecko_msg_cte_receiver_connectionless_iq_report_evt_t *report =
 				&(evt->data.evt_cte_receiver_connectionless_iq_report);
@@ -494,11 +464,13 @@ void appMain(gecko_configuration_t *pconfig)
 				*/
 
 				uint8_t* userDataPage = ram;
-				offset = (12+report->samples.len);
+				offset = (16+report->samples.len);
 				if(itr < 9){
+					//updateTime(&delta, &old, ad_data);
 					uint8_t* temp = (uint8_t*)&report->event_counter;
 					uint8_t* temp2 = (uint8_t*)other_time;
 					uint8_t* temp3 = (uint8_t*)num;
+					uint8_t* temp4 = (uint8_t*)other_overflow;
 					uint8_t preData[] = {
 						report->channel,
 						report->samples.len,
@@ -512,10 +484,15 @@ void appMain(gecko_configuration_t *pconfig)
 						temp3[1],
 						temp3[2],
 						temp3[3],
+						temp4[0],
+						temp4[1],
+						temp4[2],
+						temp4[3]
 
 					};
 					memcpy(userDataPage+offset*itr, preData, sizeof(preData));
 					memcpy(userDataPage+offset*itr+sizeof(preData), &report->samples.data, report->samples.len);
+
 				}
 				itr++;
 
@@ -525,8 +502,11 @@ void appMain(gecko_configuration_t *pconfig)
 					uint8_t* event_num = malloc(2);
 					uint8_t* num = malloc(4);
 					uint8_t* time = malloc(4);
+					uint8_t* overflow_n = malloc(4);
 					uint8_t* data = malloc(report->samples.len);
 					for(int k=0; k<itr; k++){
+						//setTemp();
+						//result = gecko_cmd_le_gap_bt5_set_adv_data(0, 8, sizeof(uint32_t)*4, temp)->result;
 						for(int i=0; i< 4; i++)
 							RETARGET_WriteChar(0xFF);
 
@@ -548,7 +528,12 @@ void appMain(gecko_configuration_t *pconfig)
 						for(int i=0; i<4; i++)
 							RETARGET_WriteChar(time[i]);
 
-						memcpy(data, userDataPage + 12*sizeof(uint8_t) + offset*k, report->samples.len);
+						memcpy(overflow_n, userDataPage + 12*sizeof(uint8_t) + offset*k,sizeof(uint32_t));
+						for(int i=0; i<4; i++)
+							RETARGET_WriteChar(overflow_n[i]);
+
+
+						memcpy(data, userDataPage + 16*sizeof(uint8_t) + offset*k, report->samples.len);
 						for (int i=0; i<report->samples.len; i++) {
 							RETARGET_WriteChar(data[i]);
 						}
@@ -560,16 +545,17 @@ void appMain(gecko_configuration_t *pconfig)
 					free(len);
 					free(data);
 					free(event_num);
+					free(overflow_n);
 					free(time);
 					itr = 0;
 				}
+
 			}
 			break;
 
 			default:
 			break;
 		}
-		updateTime(&delta, &old, ad_data);
 	}
 }
 
